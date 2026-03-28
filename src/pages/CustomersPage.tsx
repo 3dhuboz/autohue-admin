@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../services/api';
+import Sparkline from '../components/Sparkline';
+import MiniBarChart from '../components/MiniBarChart';
 
 interface Customer {
   id: number; email: string; name: string | null; tier: string;
@@ -41,6 +43,8 @@ export default function CustomersPage({ getToken }: Props) {
   const [bonusInput, setBonusInput] = useState('');
   const [bonusReason, setBonusReason] = useState('');
   const [bonusSaving, setBonusSaving] = useState(false);
+  const [sparklines, setSparklines] = useState<Record<number, number[]>>({});
+  const [creditPopover, setCreditPopover] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const token = await getToken();
@@ -60,6 +64,51 @@ export default function CustomersPage({ getToken }: Props) {
   }, [getToken, page, search]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Fetch sparklines when customers change
+  useEffect(() => {
+    if (customers.length === 0) return;
+    (async () => {
+      const token = await getToken();
+      if (!token) return;
+      const ids = customers.map(c => c.id).join(',');
+      try {
+        const res = await api.authed(token).get<{ sparklines: Record<number, number[]> }>(`/api/admin/customers/sparklines?ids=${ids}`);
+        setSparklines(res.sparklines || {});
+      } catch {}
+    })();
+  }, [customers, getToken]);
+
+  // Load usage data when a customer is selected
+  useEffect(() => {
+    if (!selected) { setUsage(null); return; }
+    (async () => {
+      setUsageLoading(true);
+      const token = await getToken();
+      if (!token) return;
+      try {
+        const u = await api.authed(token).get<UsageData>(`/api/admin/customers/${selected.id}/usage`);
+        setUsage(u);
+      } catch {}
+      setUsageLoading(false);
+    })();
+  }, [selected, getToken]);
+
+  const handleGrantBonus = async (customerId: number) => {
+    const amount = parseInt(bonusInput);
+    if (!amount || amount <= 0) return;
+    setBonusSaving(true);
+    const token = await getToken();
+    if (!token) { setBonusSaving(false); return; }
+    try {
+      await api.authed(token).post(`/api/admin/customers/${customerId}/bonus`, { bonus_quota: amount, reason: bonusReason || 'Admin grant' });
+      setCreditPopover(null);
+      setBonusInput('');
+      setBonusReason('');
+      load();
+    } catch (e) { console.error(e); }
+    setBonusSaving(false);
+  };
 
   const handleSave = async () => {
     if (!selected) return;
@@ -107,8 +156,9 @@ export default function CustomersPage({ getToken }: Props) {
               <th className="text-left px-4 py-3">Tier</th>
               <th className="text-left px-4 py-3">License Key</th>
               <th className="text-left px-4 py-3">Status</th>
-              <th className="text-left px-4 py-3">Last Validated</th>
-              <th className="text-left px-4 py-3">Created</th>
+              <th className="text-left px-4 py-3">7d Usage</th>
+              <th className="text-left px-4 py-3">Credits</th>
+              <th className="text-left px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -121,14 +171,17 @@ export default function CustomersPage({ getToken }: Props) {
                 </tr>
               ))
             ) : customers.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-8 text-white/30">No customers found</td></tr>
+              <tr><td colSpan={7} className="text-center py-8 text-white/30">No customers found</td></tr>
             ) : customers.map(c => (
               <tr
                 key={c.id}
                 onClick={() => { setSelected(c); setEditing(false); setEditForm({ tier: c.tier, name: c.name || '', notes: c.notes || '', is_active: !!c.is_active }); }}
                 className="border-b border-white/[0.03] hover:bg-white/[0.02] cursor-pointer transition-colors"
               >
-                <td className="px-4 py-3 text-white/80 font-mono text-xs">{c.email}</td>
+                <td className="px-4 py-3">
+                  <div className="text-white/80 font-mono text-xs">{c.email}</div>
+                  {c.name && <div className="text-[10px] text-white/30">{c.name}</div>}
+                </td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${TIER_BADGE[c.tier] || TIER_BADGE.trial}`}>
                     {c.tier}
@@ -139,8 +192,52 @@ export default function CustomersPage({ getToken }: Props) {
                   <span className={`inline-block w-2 h-2 rounded-full mr-2 ${c.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
                   <span className="text-xs text-white/50">{c.is_active ? 'Active' : 'Revoked'}</span>
                 </td>
-                <td className="px-4 py-3 text-xs text-white/30">{fmtDate(c.last_validated)}</td>
-                <td className="px-4 py-3 text-xs text-white/30">{fmtDate(c.created_at)}</td>
+                <td className="px-4 py-3">
+                  <Sparkline data={sparklines[c.id] || []} color={c.is_active ? '#3b82f6' : '#666'} />
+                </td>
+                <td className="px-4 py-3">
+                  <div className="relative">
+                    <span className="text-xs text-white/50 font-mono">{c.bonus_quota || 0}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setCreditPopover(creditPopover === c.id ? null : c.id); setBonusInput(''); setBonusReason(''); }}
+                      className="ml-2 w-5 h-5 rounded bg-green-500/10 text-green-400 text-[10px] font-bold hover:bg-green-500/20 transition-colors"
+                      title="Grant credits"
+                    >+</button>
+                    {creditPopover === c.id && (
+                      <div className="absolute top-8 left-0 z-30 glass-card p-3 rounded-lg shadow-xl w-52 space-y-2" onClick={e => e.stopPropagation()}>
+                        <input type="number" placeholder="Amount" value={bonusInput} onChange={e => setBonusInput(e.target.value)}
+                          className="w-full text-xs" min="1" />
+                        <input type="text" placeholder="Reason (optional)" value={bonusReason} onChange={e => setBonusReason(e.target.value)}
+                          className="w-full text-xs" />
+                        <div className="flex gap-1">
+                          <button onClick={() => handleGrantBonus(c.id)} disabled={bonusSaving}
+                            className="btn-racing px-3 py-1 text-[10px] flex-1">{bonusSaving ? '...' : 'Grant'}</button>
+                          <button onClick={() => setCreditPopover(null)} className="btn-ghost px-3 py-1 text-[10px]">Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(c.license_key || ''); }}
+                      className="w-6 h-6 rounded bg-white/5 text-white/30 text-[10px] hover:bg-white/10 hover:text-white/60 transition-colors"
+                      title="Copy license key"
+                    >CP</button>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const token = await getToken();
+                        if (!token) return;
+                        await api.authed(token).put(`/api/admin/customers/${c.id}`, { is_active: !c.is_active });
+                        load();
+                      }}
+                      className={`w-6 h-6 rounded text-[10px] transition-colors ${c.is_active ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'}`}
+                      title={c.is_active ? 'Revoke' : 'Activate'}
+                    >{c.is_active ? 'X' : '+'}</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -191,6 +288,56 @@ export default function CustomersPage({ getToken }: Props) {
                   <div><span className="text-[10px] text-white/30 uppercase">Created</span><p className="text-white/60">{fmtDate(selected.created_at)}</p></div>
                 </div>
                 {selected.notes && <div><span className="text-[10px] text-white/30 uppercase">Notes</span><p className="text-white/50 text-xs">{selected.notes}</p></div>}
+                {selected.bonus_quota != null && selected.bonus_quota > 0 && (
+                  <div><span className="text-[10px] text-white/30 uppercase">Bonus Credits</span><p className="text-green-400 font-mono">{selected.bonus_quota}</p></div>
+                )}
+
+                {/* Usage Chart */}
+                {usageLoading && <div className="h-32 bg-white/5 rounded-lg animate-pulse" />}
+                {usage && usage.dailyCounts.length > 0 && (
+                  <div>
+                    <span className="text-[10px] text-white/30 uppercase">Daily Usage (30 days)</span>
+                    <div className="mt-1">
+                      <MiniBarChart
+                        data={usage.dailyCounts.map(d => ({ label: d.day, value: d.count }))}
+                        color="#3b82f6"
+                        height={100}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* App Versions */}
+                {usage && usage.appVersions.length > 0 && (
+                  <div>
+                    <span className="text-[10px] text-white/30 uppercase">App Versions</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {usage.appVersions.map(v => (
+                        <span key={v.app_version} className="px-2 py-0.5 rounded bg-white/5 text-[10px] text-white/50 font-mono">
+                          v{v.app_version}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent Validations */}
+                {usage && usage.recentValidations.length > 0 && (
+                  <div>
+                    <span className="text-[10px] text-white/30 uppercase">Recent Check-ins ({usage.recentValidations.length})</span>
+                    <div className="mt-1 max-h-[150px] overflow-y-auto space-y-0.5">
+                      {usage.recentValidations.slice(0, 20).map((v, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[10px] py-0.5">
+                          <span className={`w-1.5 h-1.5 rounded-full ${v.result === 'valid' ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <span className="text-white/40 font-mono">{v.app_version || '?'}</span>
+                          <span className="text-white/20 flex-1 truncate">{v.machine_id?.slice(0, 8)}</span>
+                          <span className="text-white/15">{new Date(v.created_at).toLocaleDateString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-2 pt-4">
                   <button onClick={() => setEditing(true)} className="btn-ghost px-4 py-2 text-xs flex-1">Edit</button>
                   <button onClick={() => handleDelete(selected.id)} className="px-4 py-2 text-xs bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 flex-1">Delete</button>

@@ -5,9 +5,9 @@ import LicensesPage from './pages/LicensesPage';
 import PaymentsPage from './pages/PaymentsPage';
 import AccuracyLabPage from './pages/accuracy-lab';
 import ReleasesPage from './pages/ReleasesPage';
-import SystemPage from './pages/SystemPage';
+import SettingsPage from './pages/SettingsPage';
 
-type Tab = 'dashboard' | 'customers' | 'licenses' | 'payments' | 'releases' | 'accuracy' | 'system';
+type Tab = 'dashboard' | 'customers' | 'licenses' | 'payments' | 'releases' | 'settings' | 'accuracy';
 
 const tabs: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -15,8 +15,8 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'licenses', label: 'Licenses' },
   { id: 'payments', label: 'Payments' },
   { id: 'releases', label: 'Releases' },
+  { id: 'settings', label: 'Settings' },
   { id: 'accuracy', label: 'Accuracy Lab' },
-  { id: 'system', label: 'System' },
 ];
 
 // In dev mode (no Clerk key), getToken returns a mock token
@@ -85,8 +85,8 @@ export default function App() {
         {tab === 'licenses' && <LicensesPage getToken={getToken} />}
         {tab === 'payments' && <PaymentsPage getToken={getToken} />}
         {tab === 'releases' && <ReleasesPage getToken={getToken} />}
+        {tab === 'settings' && <SettingsPage getToken={getToken} />}
         {tab === 'accuracy' && <AccuracyLabPage />}
-        {tab === 'system' && <SystemPage getToken={getToken} />}
       </main>
     </div>
   );

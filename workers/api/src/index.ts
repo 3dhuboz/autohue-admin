@@ -30,7 +30,6 @@ type Env = {
   RESEND_API_KEY: string;
   LICENSE_HMAC_SECRET: string;
   CLAUDE_API_KEY_FOR_CUSTOMERS?: string;
-  OPENROUTER_KEYS?: string;
   ENVIRONMENT?: string;
 };
 
@@ -163,6 +162,26 @@ app.post('/api/license/validate', async (c) => {
     return c.json({ valid: false, error: 'key and machineId required' }, 400);
   }
 
+  // Enforce minimum app version — forces old builds to update
+  const MIN_VERSION = '3.3.5';
+  if (appVersion) {
+    const cur = appVersion.split('.').map(Number);
+    const min = MIN_VERSION.split('.').map(Number);
+    const tooOld = cur[0] < min[0]
+      || (cur[0] === min[0] && cur[1] < min[1])
+      || (cur[0] === min[0] && cur[1] === min[1] && cur[2] < min[2]);
+    if (tooOld) {
+      await logValidation(c.env.DB, null, machineId, appVersion, 'version_too_old', c.req.header('CF-Connecting-IP'));
+      return c.json({
+        valid: false,
+        error: 'update_required',
+        message: `Your version (${appVersion}) is outdated. Please update to v${MIN_VERSION} or later.`,
+        downloadUrl: 'https://autohue-api.steve-700.workers.dev/api/download/latest/windows',
+        minVersion: MIN_VERSION,
+      });
+    }
+  }
+
   const customer = await c.env.DB.prepare(
     'SELECT * FROM customers WHERE license_key = ?'
   ).bind(key).first<any>();
@@ -227,7 +246,6 @@ app.post('/api/license/validate', async (c) => {
     valid: true,
     tier: customer.tier,
     dailyLimit: tier.dailyLimit,
-    bonusQuota: (customer as any).bonus_quota || 0,
     expiresAt: customer.expires_at,
     machineSlots: customer.machine_slots,
     machinesUsed: customer.machines_used,
@@ -744,15 +762,13 @@ app.get('/api/download/:filename', async (c) => {
 app.get('/api/releases/latest', async (c) => {
   try {
     const list = await c.env.RELEASES.list();
-    const files = (list.objects || []).sort((a: any, b: any) => {
-      const ta = new Date(a.uploaded).getTime();
-      const tb = new Date(b.uploaded).getTime();
-      return tb - ta;
-    });
+    const files = (list.objects || []).sort((a: any, b: any) => new Date(b.uploaded).getTime() - new Date(a.uploaded).getTime());
 
+    // Find the latest .exe and .dmg (files may be in windows/ or mac/ subdirs)
     const latestExe = files.find((f: any) => f.key.endsWith('.exe'));
     const latestDmg = files.find((f: any) => f.key.endsWith('.dmg'));
 
+    // Extract version from filename like "AutoHue-Setup-3.3.8.exe"
     const versionMatch = (latestExe?.key || latestDmg?.key || '').match(/(\d+\.\d+\.\d+)/);
     const version = versionMatch ? versionMatch[1] : 'latest';
 
@@ -772,8 +788,8 @@ app.get('/api/download/latest/:platform', async (c) => {
   const ext = platform === 'mac' ? '.dmg' : '.exe';
 
   const list = await c.env.RELEASES.list();
-  const files = (list.objects || [])
-    .filter((f: any) => f.key.endsWith(ext))
+  const files = list.objects
+    .filter(f => f.key.endsWith(ext))
     .sort((a: any, b: any) => new Date(b.uploaded).getTime() - new Date(a.uploaded).getTime());
 
   if (files.length === 0) {
@@ -883,108 +899,162 @@ app.get('/api/admin/releases', async (c) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PUBLIC: Credit pack purchase (called from checkout page after PayPal payment)
+// ADMIN: Dashboard Charts (time-series data)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const CREDIT_PACKS: Record<string, { images: number; price: number }> = {
-  '500':   { images: 500,   price: 5 },
-  '1200':  { images: 1200,  price: 10 },
-  '3000':  { images: 3000,  price: 20 },
-  '10000': { images: 10000, price: 50 },
-};
+app.get('/api/admin/dashboard/charts', async (c) => {
+  const admin = await getAdminEmail(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
+  if (!admin) return c.json({ error: 'Unauthorized' }, 401);
 
-app.post('/api/credits/purchase', async (c) => {
-  const { orderId, pack, images, amount, email } = await c.req.json<{
-    orderId: string; pack: string; images: number; amount: string; email: string;
-  }>();
+  const [validationsPerDay, revenuePerMonth, activeUsersPerDay] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT date(created_at) as day, COUNT(*) as count
+       FROM validations
+       WHERE created_at >= datetime('now', '-30 days')
+       GROUP BY date(created_at) ORDER BY day ASC`
+    ).all<{ day: string; count: number }>(),
 
-  if (!orderId || !pack || !email) {
-    return c.json({ error: 'Missing required fields' }, 400);
-  }
+    c.env.DB.prepare(
+      `SELECT strftime('%Y-%m', created_at) as month, COALESCE(SUM(amount_usd), 0) as total
+       FROM payments WHERE status = 'completed'
+       GROUP BY strftime('%Y-%m', created_at) ORDER BY month ASC LIMIT 12`
+    ).all<{ month: string; total: number }>(),
 
-  const packInfo = CREDIT_PACKS[pack];
-  if (!packInfo) {
-    return c.json({ error: 'Invalid credit pack' }, 400);
-  }
+    c.env.DB.prepare(
+      `SELECT date(created_at) as day, COUNT(DISTINCT customer_id) as count
+       FROM validations
+       WHERE created_at >= datetime('now', '-30 days')
+       GROUP BY date(created_at) ORDER BY day ASC`
+    ).all<{ day: string; count: number }>(),
+  ]);
 
-  // Prevent duplicate processing
-  const existing = await c.env.DB.prepare(
-    'SELECT id FROM payments WHERE paypal_order_id = ?'
-  ).bind(orderId).first<{ id: number }>();
-  if (existing) {
-    return c.json({ success: true, message: 'Already processed' });
-  }
-
-  // Safe migration: add bonus_quota column if missing
-  try { await c.env.DB.exec('ALTER TABLE customers ADD COLUMN bonus_quota INTEGER DEFAULT 0'); } catch {}
-
-  // Find or create customer
-  let customer = await c.env.DB.prepare(
-    'SELECT id, bonus_quota FROM customers WHERE email = ?'
-  ).bind(email).first<{ id: number; bonus_quota: number }>();
-
-  if (!customer) {
-    // Create a trial customer with bonus credits
-    const licenseKey = 'AH-' + crypto.randomUUID().slice(0, 8).toUpperCase();
-    await c.env.DB.prepare(
-      `INSERT INTO customers (email, tier, license_key, bonus_quota) VALUES (?, 'trial', ?, ?)`
-    ).bind(email, licenseKey, packInfo.images).run();
-    customer = await c.env.DB.prepare(
-      'SELECT id, bonus_quota FROM customers WHERE email = ?'
-    ).bind(email).first<{ id: number; bonus_quota: number }>();
-  } else {
-    // Add credits to existing customer
-    const newBonus = (customer.bonus_quota || 0) + packInfo.images;
-    await c.env.DB.prepare(
-      'UPDATE customers SET bonus_quota = ?, updated_at = datetime("now") WHERE id = ?'
-    ).bind(newBonus, customer.id).run();
-  }
-
-  // Record payment
-  await c.env.DB.prepare(
-    `INSERT INTO payments (customer_id, paypal_order_id, paypal_payer_email, amount_usd, tier, status)
-     VALUES (?, ?, ?, ?, ?, 'completed')`
-  ).bind(customer?.id || null, orderId, email, packInfo.price, 'credits-' + pack).run();
-
-  return c.json({ success: true, creditsAdded: packInfo.images });
+  return c.json({
+    validationsPerDay: validationsPerDay?.results || [],
+    revenuePerMonth: revenuePerMonth?.results || [],
+    activeUsersPerDay: activeUsersPerDay?.results || [],
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ADMIN: OpenRouter key status (checks credit balances)
+// ADMIN: Recent Activity Feed
 // ═══════════════════════════════════════════════════════════════════════════════
 
-app.get('/api/admin/openrouter-status', async (c) => {
-  const orKeys = (c.env.OPENROUTER_KEYS || '').split(',').map((k: string) => k.trim()).filter(Boolean);
-  if (orKeys.length === 0) {
-    return c.json({ keys: [], error: 'No OPENROUTER_KEYS configured' });
+app.get('/api/admin/activity', async (c) => {
+  const admin = await getAdminEmail(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
+  if (!admin) return c.json({ error: 'Unauthorized' }, 401);
+
+  const [newCustomers, recentPayments, auditEntries] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, email, tier, created_at, 'customer_joined' as event_type
+       FROM customers ORDER BY created_at DESC LIMIT 10`
+    ).all<any>(),
+
+    c.env.DB.prepare(
+      `SELECT p.id, p.amount_usd, p.tier, p.status, p.created_at, c.email,
+              'payment' as event_type
+       FROM payments p LEFT JOIN customers c ON p.customer_id = c.id
+       ORDER BY p.created_at DESC LIMIT 10`
+    ).all<any>(),
+
+    c.env.DB.prepare(
+      `SELECT id, admin_email, action, target_id, details, created_at, 'admin_action' as event_type
+       FROM audit_log ORDER BY created_at DESC LIMIT 10`
+    ).all<any>(),
+  ]);
+
+  // Merge and sort by created_at descending
+  const all = [
+    ...(newCustomers?.results || []),
+    ...(recentPayments?.results || []),
+    ...(auditEntries?.results || []),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 20);
+
+  return c.json({ activity: all });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN: Batch sparklines for customer rows
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/admin/customers/sparklines', async (c) => {
+  const admin = await getAdminEmail(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
+  if (!admin) return c.json({ error: 'Unauthorized' }, 401);
+
+  const idsParam = c.req.query('ids') || '';
+  const ids = idsParam.split(',').filter(Boolean).map(Number).filter(n => !isNaN(n));
+  if (ids.length === 0) return c.json({ sparklines: {} });
+
+  // Get validation counts per day per customer for last 7 days
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await c.env.DB.prepare(
+    `SELECT customer_id, date(created_at) as day, COUNT(*) as count
+     FROM validations
+     WHERE customer_id IN (${placeholders}) AND created_at >= datetime('now', '-7 days')
+     GROUP BY customer_id, date(created_at)
+     ORDER BY day ASC`
+  ).bind(...ids).all<{ customer_id: number; day: string; count: number }>();
+
+  // Build sparkline arrays (7 values, one per day)
+  const sparklines: Record<number, number[]> = {};
+  const today = new Date();
+  for (const id of ids) {
+    sparklines[id] = Array(7).fill(0);
+  }
+  for (const row of (rows?.results || [])) {
+    const dayDate = new Date(row.day);
+    const daysAgo = Math.floor((today.getTime() - dayDate.getTime()) / 86400000);
+    const idx = 6 - Math.min(daysAgo, 6);
+    if (sparklines[row.customer_id]) {
+      sparklines[row.customer_id][idx] = row.count;
+    }
   }
 
-  const results = await Promise.all(orKeys.map(async (key: string) => {
-    try {
-      const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
-        headers: { 'Authorization': `Bearer ${key}` },
-      });
-      const data = await res.json() as any;
-      const usage = data.data?.usage || 0;
-      const limit = data.data?.limit || null;
-      const remaining = data.data?.limit_remaining || null;
-      const label = data.data?.label || '';
-      return {
-        last6: key.slice(-6),
-        label,
-        usage,
-        limit,
-        remaining,
-        status: limit !== null && remaining !== null
-          ? remaining <= 0 ? 'exhausted' : remaining < 1 ? 'low' : 'ok'
-          : usage > 1.5 ? 'low' : 'ok',
-      };
-    } catch (err: any) {
-      return { last6: key.slice(-6), label: '', usage: 0, limit: null, remaining: null, status: 'error', error: err.message };
-    }
-  }));
+  return c.json({ sparklines });
+});
 
-  return c.json({ keys: results });
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN: Settings CRUD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/admin/settings', async (c) => {
+  const admin = await getAdminEmail(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
+  if (!admin) return c.json({ error: 'Unauthorized' }, 401);
+
+  const rows = await c.env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>();
+  const settings: Record<string, any> = {};
+  for (const row of (rows?.results || [])) {
+    try { settings[row.key] = JSON.parse(row.value); } catch { settings[row.key] = row.value; }
+  }
+
+  // Merge with hardcoded defaults
+  if (!settings.tiers) settings.tiers = TIERS;
+  if (!settings.trial_duration_days) settings.trial_duration_days = 7;
+  if (!settings.machine_slots) settings.machine_slots = 2;
+  if (!settings.min_app_version) settings.min_app_version = '3.3.5';
+  if (!settings.admin_emails) settings.admin_emails = ADMIN_EMAILS;
+
+  return c.json({ settings });
+});
+
+app.put('/api/admin/settings', async (c) => {
+  const admin = await getAdminEmail(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
+  if (!admin) return c.json({ error: 'Unauthorized' }, 401);
+
+  const body = await c.req.json<Record<string, any>>();
+
+  for (const [key, value] of Object.entries(body)) {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
+    ).bind(key, serialized).run();
+  }
+
+  // Audit log
+  await c.env.DB.prepare(
+    'INSERT INTO audit_log (admin_email, action, details, created_at) VALUES (?, ?, ?, datetime("now"))'
+  ).bind(admin, 'updated_settings', JSON.stringify(Object.keys(body)), '').run();
+
+  return c.json({ success: true });
 });
 
 export default app;
