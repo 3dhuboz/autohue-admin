@@ -226,6 +226,7 @@ app.post('/api/license/validate', async (c) => {
     valid: true,
     tier: customer.tier,
     dailyLimit: tier.dailyLimit,
+    bonusQuota: (customer as any).bonus_quota || 0,
     expiresAt: customer.expires_at,
     machineSlots: customer.machine_slots,
     machinesUsed: customer.machines_used,
@@ -872,6 +873,73 @@ app.get('/api/admin/releases', async (c) => {
       uploaded: o.uploaded,
     })),
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLIC: Credit pack purchase (called from checkout page after PayPal payment)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CREDIT_PACKS: Record<string, { images: number; price: number }> = {
+  '500':   { images: 500,   price: 5 },
+  '1200':  { images: 1200,  price: 10 },
+  '3000':  { images: 3000,  price: 20 },
+  '10000': { images: 10000, price: 50 },
+};
+
+app.post('/api/credits/purchase', async (c) => {
+  const { orderId, pack, images, amount, email } = await c.req.json<{
+    orderId: string; pack: string; images: number; amount: string; email: string;
+  }>();
+
+  if (!orderId || !pack || !email) {
+    return c.json({ error: 'Missing required fields' }, 400);
+  }
+
+  const packInfo = CREDIT_PACKS[pack];
+  if (!packInfo) {
+    return c.json({ error: 'Invalid credit pack' }, 400);
+  }
+
+  // Prevent duplicate processing
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM payments WHERE paypal_order_id = ?'
+  ).bind(orderId).first<{ id: number }>();
+  if (existing) {
+    return c.json({ success: true, message: 'Already processed' });
+  }
+
+  // Safe migration: add bonus_quota column if missing
+  try { await c.env.DB.exec('ALTER TABLE customers ADD COLUMN bonus_quota INTEGER DEFAULT 0'); } catch {}
+
+  // Find or create customer
+  let customer = await c.env.DB.prepare(
+    'SELECT id, bonus_quota FROM customers WHERE email = ?'
+  ).bind(email).first<{ id: number; bonus_quota: number }>();
+
+  if (!customer) {
+    // Create a trial customer with bonus credits
+    const licenseKey = 'AH-' + crypto.randomUUID().slice(0, 8).toUpperCase();
+    await c.env.DB.prepare(
+      `INSERT INTO customers (email, tier, license_key, bonus_quota) VALUES (?, 'trial', ?, ?)`
+    ).bind(email, licenseKey, packInfo.images).run();
+    customer = await c.env.DB.prepare(
+      'SELECT id, bonus_quota FROM customers WHERE email = ?'
+    ).bind(email).first<{ id: number; bonus_quota: number }>();
+  } else {
+    // Add credits to existing customer
+    const newBonus = (customer.bonus_quota || 0) + packInfo.images;
+    await c.env.DB.prepare(
+      'UPDATE customers SET bonus_quota = ?, updated_at = datetime("now") WHERE id = ?'
+    ).bind(newBonus, customer.id).run();
+  }
+
+  // Record payment
+  await c.env.DB.prepare(
+    `INSERT INTO payments (customer_id, paypal_order_id, paypal_payer_email, amount_usd, tier, status)
+     VALUES (?, ?, ?, ?, ?, 'completed')`
+  ).bind(customer?.id || null, orderId, email, packInfo.price, 'credits-' + pack).run();
+
+  return c.json({ success: true, creditsAdded: packInfo.images });
 });
 
 export default app;
