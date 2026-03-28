@@ -30,6 +30,7 @@ type Env = {
   RESEND_API_KEY: string;
   LICENSE_HMAC_SECRET: string;
   CLAUDE_API_KEY_FOR_CUSTOMERS?: string;
+  OPENROUTER_KEYS?: string;
   ENVIRONMENT?: string;
 };
 
@@ -940,6 +941,44 @@ app.post('/api/credits/purchase', async (c) => {
   ).bind(customer?.id || null, orderId, email, packInfo.price, 'credits-' + pack).run();
 
   return c.json({ success: true, creditsAdded: packInfo.images });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADMIN: OpenRouter key status (checks credit balances)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/admin/openrouter-status', async (c) => {
+  const orKeys = (c.env.OPENROUTER_KEYS || '').split(',').map((k: string) => k.trim()).filter(Boolean);
+  if (orKeys.length === 0) {
+    return c.json({ keys: [], error: 'No OPENROUTER_KEYS configured' });
+  }
+
+  const results = await Promise.all(orKeys.map(async (key: string) => {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/auth/key', {
+        headers: { 'Authorization': `Bearer ${key}` },
+      });
+      const data = await res.json() as any;
+      const usage = data.data?.usage || 0;
+      const limit = data.data?.limit || null;
+      const remaining = data.data?.limit_remaining || null;
+      const label = data.data?.label || '';
+      return {
+        last6: key.slice(-6),
+        label,
+        usage,
+        limit,
+        remaining,
+        status: limit !== null && remaining !== null
+          ? remaining <= 0 ? 'exhausted' : remaining < 1 ? 'low' : 'ok'
+          : usage > 1.5 ? 'low' : 'ok',
+      };
+    } catch (err: any) {
+      return { last6: key.slice(-6), label: '', usage: 0, limit: null, remaining: null, status: 'error', error: err.message };
+    }
+  }));
+
+  return c.json({ keys: results });
 });
 
 export default app;
