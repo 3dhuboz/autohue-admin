@@ -1020,6 +1020,7 @@ app.get('/api/admin/settings', async (c) => {
   const admin = await getAdminEmail(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!admin) return c.json({ error: 'Unauthorized' }, 401);
 
+  try { await c.env.DB.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)'); } catch {}
   const rows = await c.env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>();
   const settings: Record<string, any> = {};
   for (const row of (rows?.results || [])) {
@@ -1052,7 +1053,7 @@ app.put('/api/admin/settings', async (c) => {
   // Audit log
   await c.env.DB.prepare(
     'INSERT INTO audit_log (admin_email, action, details, created_at) VALUES (?, ?, ?, datetime("now"))'
-  ).bind(admin, 'updated_settings', JSON.stringify(Object.keys(body)), '').run();
+  ).bind(admin, 'updated_settings', 0, JSON.stringify(Object.keys(body))).run();
 
   return c.json({ success: true });
 });

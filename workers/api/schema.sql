@@ -85,3 +85,9 @@ CREATE INDEX IF NOT EXISTS idx_customers_tier ON customers(tier);
 CREATE INDEX IF NOT EXISTS idx_payments_customer_id ON payments(customer_id);
 CREATE INDEX IF NOT EXISTS idx_validations_customer_id ON validations(customer_id);
 CREATE INDEX IF NOT EXISTS idx_validations_created_at ON validations(created_at);
+
+-- Admin settings (key-value store)
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

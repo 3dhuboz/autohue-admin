@@ -45,6 +45,9 @@ export default function CustomersPage({ getToken }: Props) {
   const [bonusSaving, setBonusSaving] = useState(false);
   const [sparklines, setSparklines] = useState<Record<number, number[]>>({});
   const [creditPopover, setCreditPopover] = useState<number | null>(null);
+  const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [addForm, setAddForm] = useState({ email: '', name: '', tier: 'trial', notes: '' });
+  const [addSaving, setAddSaving] = useState(false);
 
   const load = useCallback(async () => {
     const token = await getToken();
@@ -110,6 +113,24 @@ export default function CustomersPage({ getToken }: Props) {
     setBonusSaving(false);
   };
 
+  const handleAddCustomer = async () => {
+    if (!addForm.email) return;
+    setAddSaving(true);
+    const token = await getToken();
+    if (!token) { setAddSaving(false); return; }
+    try {
+      await api.authed(token).post('/api/admin/licenses/generate', {
+        tier: addForm.tier,
+        email: addForm.email,
+        notes: addForm.notes || undefined,
+      });
+      setShowAddCustomer(false);
+      setAddForm({ email: '', name: '', tier: 'trial', notes: '' });
+      load();
+    } catch (e) { console.error(e); }
+    setAddSaving(false);
+  };
+
   const handleSave = async () => {
     if (!selected) return;
     const token = await getToken();
@@ -138,13 +159,19 @@ export default function CustomersPage({ getToken }: Props) {
         <h1 className="text-2xl font-heading font-bold">
           Customers <span className="text-white/30 text-base font-normal">({total})</span>
         </h1>
-        <input
-          type="text"
-          placeholder="Search by email, name, or key..."
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1); }}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowAddCustomer(true)}
+            className="px-4 py-2 bg-racing-500 text-white text-xs font-bold rounded-lg hover:bg-racing-600 transition-colors"
+          >+ Add Customer</button>
+          <input
+            type="text"
+            placeholder="Search by email, name, or key..."
+            value={search}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
           className="w-72 text-sm"
-        />
+          />
+        </div>
       </div>
 
       {/* Table */}
@@ -256,6 +283,38 @@ export default function CustomersPage({ getToken }: Props) {
               {i + 1}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Add Customer Modal */}
+      {showAddCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowAddCustomer(false)}>
+          <div className="glass-card p-6 w-full max-w-md rounded-xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-heading font-bold mb-4">Add Customer</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] text-white/30 uppercase block mb-1">Email *</label>
+                <input value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} className="w-full text-sm" placeholder="customer@example.com" />
+              </div>
+              <div>
+                <label className="text-[10px] text-white/30 uppercase block mb-1">Tier</label>
+                <select value={addForm.tier} onChange={e => setAddForm(f => ({ ...f, tier: e.target.value }))} className="w-full text-sm">
+                  <option value="trial">Trial</option>
+                  <option value="hobbyist">Hobbyist</option>
+                  <option value="pro">Pro</option>
+                  <option value="unlimited">Unlimited</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-white/30 uppercase block mb-1">Notes</label>
+                <input value={addForm.notes} onChange={e => setAddForm(f => ({ ...f, notes: e.target.value }))} className="w-full text-sm" placeholder="Optional" />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={handleAddCustomer} disabled={addSaving} className="btn-racing px-4 py-2 text-xs flex-1">{addSaving ? 'Creating...' : 'Create & Generate License'}</button>
+                <button onClick={() => setShowAddCustomer(false)} className="btn-ghost px-4 py-2 text-xs">Cancel</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -4,11 +4,9 @@ import DashboardPage from './pages/DashboardPage';
 import CustomersPage from './pages/CustomersPage';
 import LicensesPage from './pages/LicensesPage';
 import PaymentsPage from './pages/PaymentsPage';
-import AccuracyLabPage from './pages/accuracy-lab';
 import ReleasesPage from './pages/ReleasesPage';
 import SettingsPage from './pages/SettingsPage';
 
-type Tab = 'dashboard' | 'customers' | 'licenses' | 'payments' | 'releases' | 'settings' | 'accuracy';
 
 const ADMIN_EMAILS = ['steve@3dhub.au', 'steve@pennywiseit.com.au'];
 
@@ -19,7 +17,6 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'payments', label: 'Payments' },
   { id: 'releases', label: 'Releases' },
   { id: 'settings', label: 'Settings' },
-  { id: 'accuracy', label: 'Accuracy Lab' },
 ];
 
 function AdminDashboard() {
@@ -76,7 +73,6 @@ function AdminDashboard() {
         {tab === 'payments' && <PaymentsPage getToken={getToken} />}
         {tab === 'releases' && <ReleasesPage getToken={getToken} />}
         {tab === 'settings' && <SettingsPage getToken={getToken} />}
-        {tab === 'accuracy' && <AccuracyLabPage />}
       </main>
     </>
   );
