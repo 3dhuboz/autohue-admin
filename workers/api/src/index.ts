@@ -742,22 +742,28 @@ app.get('/api/download/:filename', async (c) => {
 
 // Get latest release info (version + file details for each platform)
 app.get('/api/releases/latest', async (c) => {
-  const list = await c.env.RELEASES.list();
-  const files = list.objects.sort((a, b) => b.uploaded.localeCompare(a.uploaded));
+  try {
+    const list = await c.env.RELEASES.list();
+    const files = (list.objects || []).sort((a: any, b: any) => {
+      const ta = new Date(a.uploaded).getTime();
+      const tb = new Date(b.uploaded).getTime();
+      return tb - ta;
+    });
 
-  // Find the latest .exe and .dmg
-  const latestExe = files.find(f => f.key.endsWith('.exe'));
-  const latestDmg = files.find(f => f.key.endsWith('.dmg'));
+    const latestExe = files.find((f: any) => f.key.endsWith('.exe'));
+    const latestDmg = files.find((f: any) => f.key.endsWith('.dmg'));
 
-  // Extract version from filename like "AutoHue-Setup-3.3.2.exe"
-  const versionMatch = (latestExe?.key || latestDmg?.key || '').match(/(\d+\.\d+\.\d+)/);
-  const version = versionMatch ? versionMatch[1] : 'latest';
+    const versionMatch = (latestExe?.key || latestDmg?.key || '').match(/(\d+\.\d+\.\d+)/);
+    const version = versionMatch ? versionMatch[1] : 'latest';
 
-  return c.json({
-    version,
-    windows: latestExe ? { filename: latestExe.key, size: latestExe.size } : undefined,
-    mac: latestDmg ? { filename: latestDmg.key, size: latestDmg.size } : undefined,
-  });
+    return c.json({
+      version,
+      windows: latestExe ? { filename: latestExe.key, size: latestExe.size } : undefined,
+      mac: latestDmg ? { filename: latestDmg.key, size: latestDmg.size } : undefined,
+    });
+  } catch (err: any) {
+    return c.json({ error: 'Failed to list releases', detail: err.message }, 500);
+  }
 });
 
 // Download the latest release for a platform — always serves the newest file
@@ -766,9 +772,9 @@ app.get('/api/download/latest/:platform', async (c) => {
   const ext = platform === 'mac' ? '.dmg' : '.exe';
 
   const list = await c.env.RELEASES.list();
-  const files = list.objects
-    .filter(f => f.key.endsWith(ext))
-    .sort((a, b) => b.uploaded.localeCompare(a.uploaded));
+  const files = (list.objects || [])
+    .filter((f: any) => f.key.endsWith(ext))
+    .sort((a: any, b: any) => new Date(b.uploaded).getTime() - new Date(a.uploaded).getTime());
 
   if (files.length === 0) {
     return c.json({ error: `No ${platform} release available yet. Check back soon.` }, 404);
