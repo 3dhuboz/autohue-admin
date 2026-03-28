@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Buy AutoHue — AI Car Photo Color Sorter</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://www.paypal.com/sdk/js?client-id=REPLACE_WITH_PAYPAL_CLIENT_ID&vault=true&intent=subscription"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Outfit', sans-serif; background: #111113; color: #e5e5e5; min-height: 100vh; }
+    h1, h2, h3 { font-family: 'Space Grotesk', sans-serif; }
+    .container { max-width: 900px; margin: 0 auto; padding: 60px 24px; }
+    .hero { text-align: center; margin-bottom: 48px; }
+    .hero h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 12px; }
+    .hero h1 span { color: #ef4444; }
+    .hero p { color: rgba(255,255,255,0.5); font-size: 1.1rem; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    @media (max-width: 768px) { .cards { grid-template-columns: 1fr; } }
+    .card {
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; padding: 32px 24px; text-align: center; position: relative;
+      transition: all 0.3s;
+    }
+    .card:hover { border-color: rgba(220,38,38,0.3); transform: translateY(-4px); box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+    .card.popular { border-color: rgba(220,38,38,0.4); box-shadow: 0 0 30px rgba(220,38,38,0.1); }
+    .card.popular::before {
+      content: 'Most Popular'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+      background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; font-size: 11px;
+      font-weight: 700; padding: 4px 16px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .card h3 { font-size: 1.3rem; font-weight: 600; margin-bottom: 8px; }
+    .card .price { font-size: 2.5rem; font-weight: 700; color: #ef4444; margin-bottom: 4px; }
+    .card .price-sub { color: rgba(255,255,255,0.3); font-size: 0.85rem; margin-bottom: 20px; }
+    .card .limit { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 8px; font-size: 0.9rem; color: rgba(255,255,255,0.6); margin-bottom: 20px; }
+    .card ul { list-style: none; text-align: left; margin-bottom: 24px; }
+    .card ul li { padding: 6px 0; font-size: 0.85rem; color: rgba(255,255,255,0.5); }
+    .card ul li::before { content: '✓'; color: #22c55e; margin-right: 8px; font-weight: 700; }
+    .email-input {
+      width: 100%; padding: 10px 14px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px; color: #e5e5e5; font-size: 14px; margin-bottom: 16px; outline: none;
+    }
+    .email-input:focus { border-color: rgba(220,38,38,0.5); }
+    .paypal-container { min-height: 50px; }
+    .success-msg {
+      background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); border-radius: 12px;
+      padding: 24px; text-align: center; margin-top: 24px; display: none;
+    }
+    .success-msg h3 { color: #22c55e; margin-bottom: 8px; }
+    .success-msg .key {
+      font-family: 'JetBrains Mono', monospace; font-size: 1.2rem; color: #ef4444;
+      background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; margin: 12px 0;
+      letter-spacing: 2px; word-break: break-all;
+    }
+    .footer { text-align: center; margin-top: 60px; color: rgba(255,255,255,0.2); font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <h1>Get <span>AutoHue</span></h1>
+      <p>AI-powered car photo colour sorter for motorsport photographers</p>
+    </div>
+
+    <div class="cards">
+      <!-- Hobbyist -->
+      <div class="card" id="card-hobbyist">
+        <h3>Hobbyist</h3>
+        <div class="price">$14<span style="font-size: 1rem; color: rgba(255,255,255,0.4);">/mo</span></div>
+        <div class="price-sub">Monthly subscription</div>
+        <div class="limit">500 images / day</div>
+        <ul>
+          <li>Cancel anytime</li>
+          <li>2 machine activations</li>
+          <li>All file formats</li>
+          <li>Local AI processing</li>
+        </ul>
+        <input type="email" class="email-input" id="email-hobbyist" placeholder="your@email.com" />
+        <div class="paypal-container" id="paypal-hobbyist"></div>
+      </div>
+
+      <!-- Pro -->
+      <div class="card popular" id="card-pro">
+        <h3>Pro</h3>
+        <div class="price">$49<span style="font-size: 1rem; color: rgba(255,255,255,0.4);">/mo</span></div>
+        <div class="price-sub">Monthly subscription</div>
+        <div class="limit">5,000 images / day</div>
+        <ul>
+          <li>Cancel anytime</li>
+          <li>2 machine activations</li>
+          <li>All file formats</li>
+          <li>Batch folder processing</li>
+        </ul>
+        <input type="email" class="email-input" id="email-pro" placeholder="your@email.com" />
+        <div class="paypal-container" id="paypal-pro"></div>
+      </div>
+
+      <!-- Unlimited -->
+      <div class="card" id="card-unlimited">
+        <h3>Unlimited</h3>
+        <div class="price">$99<span style="font-size: 1rem; color: rgba(255,255,255,0.4);">/mo</span></div>
+        <div class="price-sub">Monthly subscription</div>
+        <div class="limit">No daily limit</div>
+        <ul>
+          <li>Cancel anytime</li>
+          <li>2 machine activations</li>
+          <li>All file formats</li>
+          <li>Commercial use</li>
+        </ul>
+        <input type="email" class="email-input" id="email-unlimited" placeholder="your@email.com" />
+        <div class="paypal-container" id="paypal-unlimited"></div>
+      </div>
+    </div>
+
+    <!-- Success message (shown after purchase) -->
+    <div class="success-msg" id="success-msg">
+      <h3>Purchase Complete!</h3>
+      <p>Your license key has been generated and emailed to you:</p>
+      <div class="key" id="license-key-display"></div>
+      <p style="color: rgba(255,255,255,0.4); font-size: 0.85rem;">
+        Paste this key into AutoHue Desktop to activate. Check your email for a copy.
+      </p>
+    </div>
+
+    <div class="footer">
+      <p>AutoHue — AI Car Photo Color Sorter &middot; All processing happens locally on your machine</p>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = ''; // Same origin when deployed, or set to worker URL
+
+    // PayPal Plan IDs — create these in your PayPal Dashboard and replace below
+    const PLAN_IDS = {
+      hobbyist:  'REPLACE_WITH_HOBBYIST_PLAN_ID',
+      pro:       'REPLACE_WITH_PRO_PLAN_ID',
+      unlimited: 'REPLACE_WITH_UNLIMITED_PLAN_ID',
+    };
+
+    function renderPayPalButton(tier) {
+      paypal.Buttons({
+        style: { layout: 'vertical', color: 'black', shape: 'rect', label: 'subscribe', height: 40 },
+        createSubscription: async (data, actions) => {
+          const email = document.getElementById('email-' + tier).value.trim();
+          if (!email || !email.includes('@')) {
+            alert('Please enter a valid email address.');
+            throw new Error('No email');
+          }
+          return actions.subscription.create({
+            plan_id: PLAN_IDS[tier],
+            custom_id: JSON.stringify({ tier, email }),
+          });
+        },
+        onApprove: async (data) => {
+          const email = document.getElementById('email-' + tier).value.trim();
+          const res = await fetch(API_BASE + '/api/paypal/activate-subscription', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscriptionId: data.subscriptionID, email }),
+          });
+          const result = await res.json();
+          if (result.success) {
+            document.getElementById('license-key-display').textContent = result.licenseKey;
+            document.getElementById('success-msg').style.display = 'block';
+            document.getElementById('card-' + tier).style.opacity = '0.3';
+            window.scrollTo({ top: document.getElementById('success-msg').offsetTop - 40, behavior: 'smooth' });
+          } else {
+            alert('Subscription created but license generation failed. Contact support.');
+          }
+        },
+        onError: (err) => {
+          console.error('PayPal error:', err);
+          alert('Subscription failed. Please try again.');
+        },
+      }).render('#paypal-' + tier);
+    }
+
+    renderPayPalButton('hobbyist');
+    renderPayPalButton('pro');
+    renderPayPalButton('unlimited');
+  </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+name = "autohue-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets — set via: npx wrangler secret put KEY_NAME
+# CLERK_SECRET_KEY        (Clerk secret for JWT verification)
+# PAYPAL_CLIENT_ID        (PayPal REST API client ID)
+# PAYPAL_CLIENT_SECRET    (PayPal REST API secret)
+# RESEND_API_KEY          (Resend email API key)
+# LICENSE_HMAC_SECRET     (Secret for license key checksum generation)
+
+[[d1_databases]]
+binding = "DB"
+database_name = "autohue-db"
+database_id = "3c883ddc-829d-410d-94db-9d4ca6e80705"
+
+[[r2_buckets]]
+binding = "RELEASES"
+bucket_name = "autohue-releases"
+
+[dev]
+port = 8787
